@@ -39,6 +39,54 @@ openclaw onebot setup
 
 你需要安装 onebot 服务端，QQ 目前比较常用的是 onebot 服务端是 NapCat，可以查看 [官网](https://napneko.github.io/) 了解安装方法
 
+### NapCat 配置
+
+在 NapCat 的网络配置中添加以下连接：
+
+#### 方式 1：反向 WebSocket（推荐）
+
+OpenClaw 作为服务端，NapCat 主动连接：
+
+1. 在 NapCat 网络配置中添加 **WebSocket 客户端**
+2. URL：`ws://openclaw-gateway:18790/onebot/v11/ws`
+   - `openclaw-gateway` 需要在同一个 Docker network 中
+   - 或直接使用 OpenClaw 容器的 IP 地址
+3. Token：与 `openclaw.json` 中的 `accessToken` 保持一致
+
+#### 方式 2：正向 WebSocket
+
+OpenClaw 主动连接 NapCat：
+
+1. 在 NapCat 网络配置中添加 **WebSocket 服务器**
+2. 监听端口：`3001`
+3. 在 `openclaw.json` 中配置：
+
+```json
+{
+  "channels": {
+    "onebot": {
+      "enabled": true,
+      "type": "forward-websocket",
+      "host": "napcat",
+      "port": 3001
+    }
+  }
+}
+```
+
+#### Docker Network 配置示例
+
+```bash
+# 创建共享网络
+docker network create openclaw-net
+
+# OpenClaw 容器加入网络
+docker network connect openclaw-net openclaw-gateway
+
+# NapCat 容器加入网络
+docker network connect openclaw-net napcat
+```
+
 
 ### 连接类型
 
@@ -114,6 +162,39 @@ openclaw message send --channel onebot --target group:987654321 --media "file://
     }
   }
 }
+```
+
+## 群聊历史消息上下文
+
+当机器人在群聊中被 @ 时，可以自动获取最近的聊天记录作为上下文，让 AI 更好地理解对话内容。
+
+```json
+{
+  "channels": {
+    "onebot": {
+      "requireMention": true,
+      "groupHistoryOnMention": true,
+      "groupHistoryLimit": 50
+    }
+  }
+}
+```
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `requireMention` | boolean | false | 群聊是否需要 @ 才响应 |
+| `groupHistoryOnMention` | boolean | false | 被 @ 时是否获取历史消息 |
+| `groupHistoryLimit` | number | 50 | 获取历史消息的最大数量 |
+
+历史消息会格式化为：
+
+```
+【群聊历史记录】
+[用户A]: 今天天气真好
+[用户B]: 是啊，适合出去玩
+【以上是历史消息】
+
+用户消息: @机器人 你觉得呢？
 ```
 
 ## 新人入群触发器
