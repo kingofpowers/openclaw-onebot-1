@@ -270,6 +270,58 @@ networks:
 
 **向前兼容**：单账号的扁平配置格式仍然有效，自动作为 `default` 账号。
 
+### 账号级别配置
+
+每个账号可以独立配置行为设置，支持以下配置项：
+
+| 配置项 | 说明 |
+|--------|------|
+| `requireMention` | 是否需要 @ 才响应 |
+| `groupHistoryOnMention` | 被 @ 时是否获取群历史消息 |
+| `groupHistoryLimit` | 获取历史消息的数量 |
+| `groups` | 按群覆盖配置 |
+
+**配置优先级**：账号群配置 > 账号配置 > 全局群配置 > 全局配置
+
+```json
+{
+  "channels": {
+    "onebot": {
+      "requireMention": true,
+      "groupHistoryOnMention": true,
+      "groups": {
+        "1091416099": { "requireMention": false }
+      },
+      "accounts": {
+        "main": {
+          "type": "backward-websocket",
+          "port": 18790
+        },
+        "macro": {
+          "type": "forward-websocket",
+          "host": "napcat2",
+          "port": 3011,
+          "requireMention": false,
+          "groupHistoryOnMention": false,
+          "groups": {
+            "12345678": { "requireMention": true }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**上述配置效果**：
+
+| 账号 | 群 | requireMention | 说明 |
+|------|-----|----------------|------|
+| main | 所有群 | true | 全局配置 |
+| main | 1091416099 | false | 全局群配置覆盖 |
+| macro | 所有群 | false | 账号配置覆盖全局 |
+| macro | 12345678 | true | 账号群配置覆盖账号配置 |
+
 ### 连接类型
 
 | 类型 | 说明 |

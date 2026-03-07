@@ -81,14 +81,27 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     const isGroup = msg.message_type === "group";
     const groupId = msg.group_id;
     const cfg = api.config;
-    // 群级别的 requireMention 可以覆盖全局配置
-    let requireMention = cfg?.channels?.onebot?.requireMention ?? true;
-    if (isGroup && groupId) {
-        const groupConfig = cfg?.channels?.onebot?.groups?.[String(groupId)];
-        if (groupConfig && typeof groupConfig.requireMention === "boolean") {
-            requireMention = groupConfig.requireMention;
-        }
+    const onebotCfg = cfg?.channels?.onebot ?? {};
+    const accountConfig = onebotCfg.accounts?.[effectiveAccountId] ?? {};
+    
+    // requireMention 优先级：账号群配置 > 账号配置 > 全局群配置 > 全局配置
+    let requireMention = onebotCfg.requireMention ?? true;
+    
+    // 全局群配置
+    if (isGroup && groupId && onebotCfg.groups?.[String(groupId)]?.requireMention !== undefined) {
+        requireMention = onebotCfg.groups[String(groupId)].requireMention;
     }
+    
+    // 账号配置（覆盖全局）
+    if (accountConfig.requireMention !== undefined) {
+        requireMention = accountConfig.requireMention;
+    }
+    
+    // 账号群配置（最高优先级）
+    if (isGroup && groupId && accountConfig.groups?.[String(groupId)]?.requireMention !== undefined) {
+        requireMention = accountConfig.groups[String(groupId)].requireMention;
+    }
+    
     if (isGroup && requireMention && !isMentioned(msg, selfId)) {
         api.logger?.info?.(`[onebot] ignoring group message without @mention`);
         return;
@@ -236,9 +249,34 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     }) ?? { content: [{ type: "text", text: messageText }] };
     
     // 群聊被 @ 时获取历史消息作为上下文（纯命令不拉取历史）
-    const onebotCfg = cfg?.channels?.onebot ?? {};
-    const groupHistoryOnMention = onebotCfg.groupHistoryOnMention ?? false;
-    const groupHistoryLimit = onebotCfg.groupHistoryLimit ?? 50;
+    // groupHistoryOnMention 优先级：账号群配置 > 账号配置 > 全局群配置 > 全局配置
+    let groupHistoryOnMention = onebotCfg.groupHistoryOnMention ?? false;
+    let groupHistoryLimit = onebotCfg.groupHistoryLimit ?? 50;
+    
+    // 全局群配置
+    if (isGroup && groupId && onebotCfg.groups?.[String(groupId)]?.groupHistoryOnMention !== undefined) {
+        groupHistoryOnMention = onebotCfg.groups[String(groupId)].groupHistoryOnMention;
+    }
+    if (isGroup && groupId && onebotCfg.groups?.[String(groupId)]?.groupHistoryLimit !== undefined) {
+        groupHistoryLimit = onebotCfg.groups[String(groupId)].groupHistoryLimit;
+    }
+    
+    // 账号配置（覆盖全局）
+    if (accountConfig.groupHistoryOnMention !== undefined) {
+        groupHistoryOnMention = accountConfig.groupHistoryOnMention;
+    }
+    if (accountConfig.groupHistoryLimit !== undefined) {
+        groupHistoryLimit = accountConfig.groupHistoryLimit;
+    }
+    
+    // 账号群配置（最高优先级）
+    if (isGroup && groupId && accountConfig.groups?.[String(groupId)]?.groupHistoryOnMention !== undefined) {
+        groupHistoryOnMention = accountConfig.groups[String(groupId)].groupHistoryOnMention;
+    }
+    if (isGroup && groupId && accountConfig.groups?.[String(groupId)]?.groupHistoryLimit !== undefined) {
+        groupHistoryLimit = accountConfig.groups[String(groupId)].groupHistoryLimit;
+    }
+    
     let historyContext = [];
     if (isGroup && isMentioned(msg, selfId) && groupHistoryOnMention && groupId && !isPureCommand) {
         try {
