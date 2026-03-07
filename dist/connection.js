@@ -68,33 +68,37 @@ function cleanupImageTemp() {
         /* dir not exist or readdir failed */
     }
 }
-/** 将 mediaUrl 解析为可发送的 file 路径。网络 URL 下载到本地，base64 解码到本地，定期清理过期文件 */
+/** 将 mediaUrl 解析为可发送的格式。网络 URL 下载后转 base64，本地文件读取后转 base64，兼容跨容器发送 */
 async function resolveImageToLocalPath(image) {
     const trimmed = image?.trim();
     if (!trimmed)
         throw new Error("Empty image");
+    const fs = await import("fs");
+    // 网络 URL：下载后转 base64
     if (/^https?:\/\//i.test(trimmed)) {
         cleanupImageTemp();
         const buf = await downloadUrl(trimmed);
         const ext = (trimmed.match(/\.(png|jpg|jpeg|gif|webp|bmp)(?:\?|$)/i)?.[1] ?? "png").toLowerCase();
-        mkdirSync(IMAGE_TEMP_DIR, { recursive: true });
-        const tmpPath = join(IMAGE_TEMP_DIR, `img-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
-        writeFileSync(tmpPath, buf);
-        return tmpPath.replace(/\\/g, "/");
+        const b64 = buf.toString("base64");
+        return `base64://${b64}`;
     }
+    // base64:// 直接返回
     if (trimmed.startsWith("base64://")) {
-        cleanupImageTemp();
-        const b64 = trimmed.slice(9);
-        const buf = Buffer.from(b64, "base64");
-        mkdirSync(IMAGE_TEMP_DIR, { recursive: true });
-        const tmpPath = join(IMAGE_TEMP_DIR, `img-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
-        writeFileSync(tmpPath, buf);
-        return tmpPath.replace(/\\/g, "/");
+        return trimmed;
     }
+    // file:// 或本地路径：读取后转 base64（兼容跨容器）
+    let filePath = trimmed;
     if (trimmed.startsWith("file://")) {
-        return trimmed.slice(7).replace(/\\/g, "/");
+        filePath = trimmed.slice(7);
     }
-    return trimmed.replace(/\\/g, "/");
+    try {
+        const buf = fs.readFileSync(filePath);
+        const b64 = buf.toString("base64");
+        return `base64://${b64}`;
+    }
+    catch (e) {
+        throw new Error(`Failed to read image file: ${filePath}`);
+    }
 }
 /** 启动临时图片定期清理（每小时执行一次） */
 export function startImageTempCleanup() {
