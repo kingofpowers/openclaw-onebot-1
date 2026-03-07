@@ -1,7 +1,7 @@
 /**
  * OneBot WebSocket 服务（多账号支持）
  */
-import { getOneBotConfig, listAccountIds } from "./config.js";
+import { getOneBotConfig, listAccountIds, invalidateConfigCache } from "./config.js";
 import { connectForward, createServerAndWait, addWs, removeWs, stopConnection, handleEchoResponse, startImageTempCleanup, stopImageTempCleanup, getWs } from "./connection.js";
 import { processInboundMessage } from "./handlers/process-inbound.js";
 import { handleGroupIncrease } from "./handlers/group-increase.js";
@@ -148,7 +148,9 @@ async function startConfigWatcher(api) {
     
     configWatcher = watch(configPath, (eventType) => {
         if (eventType === "change") {
-            log.info?.(`[onebot] config file changed, triggering reload...`);
+            log.info?.(`[onebot] config file changed, invalidating cache...`);
+            // 清除配置缓存，下次读取时会重新加载
+            invalidateConfigCache();
             // 延迟一小段时间，确保文件写入完成
             setTimeout(() => {
                 reloadConnections(api).catch((e) => {

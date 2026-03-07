@@ -3,17 +3,21 @@
  */
 import { readFileSync, existsSync } from "fs";
 
-// 配置文件缓存（带过期时间）
+// 配置缓存（仅在文件变化时更新）
 let cachedConfig = null;
-let cacheTime = 0;
-const CACHE_TTL_MS = 5000; // 5 秒缓存
 
 /**
- * 从文件读取最新配置（带缓存）
+ * 清除配置缓存（在检测到文件变化时调用）
+ */
+export function invalidateConfigCache() {
+    cachedConfig = null;
+}
+
+/**
+ * 从文件读取最新配置（仅在缓存失效时读取）
  */
 export function getLiveConfig() {
-    const now = Date.now();
-    if (cachedConfig && (now - cacheTime) < CACHE_TTL_MS) {
+    if (cachedConfig) {
         return cachedConfig;
     }
     
@@ -28,7 +32,6 @@ export function getLiveConfig() {
             if (existsSync(path)) {
                 const content = readFileSync(path, "utf-8");
                 cachedConfig = JSON.parse(content);
-                cacheTime = now;
                 return cachedConfig;
             }
         } catch {
