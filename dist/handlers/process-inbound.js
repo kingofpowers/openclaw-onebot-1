@@ -36,7 +36,7 @@ export function startForwardCleanupTimer() {
         return;
     forwardCleanupTimer = setInterval(cleanupForwardPendingSessions, FORWARD_CLEANUP_INTERVAL_MS);
 }
-export async function processInboundMessage(api, msg) {
+export async function processInboundMessage(api, msg, accountId = "default") {
     await loadPluginSdk();
     const { buildPendingHistoryContextFromMap, recordPendingHistoryEntry, clearHistoryEntriesIfEnabled } = getSdk();
     const runtime = api.runtime;
@@ -44,7 +44,8 @@ export async function processInboundMessage(api, msg) {
         api.logger?.warn?.("[onebot] runtime.channel.reply not available");
         return;
     }
-    const config = getOneBotConfig(api);
+    const config = getOneBotConfig(api, accountId);
+    const effectiveAccountId = config?.accountId ?? accountId ?? "default";
     if (!config) {
         api.logger?.warn?.("[onebot] not configured");
         return;
@@ -58,7 +59,7 @@ export async function processInboundMessage(api, msg) {
     if (replyId != null) {
         const userText = getTextFromSegments(msg);
         try {
-            const quoted = await getMsg(replyId);
+            const quoted = await getMsg(replyId, effectiveAccountId);
             const quotedText = quoted ? getTextFromMessageContent(quoted.message) : "";
             const senderLabel = quoted?.sender?.nickname ?? quoted?.sender?.user_id ?? "某人";
             messageText = quotedText.trim()
@@ -108,14 +109,15 @@ export async function processInboundMessage(api, msg) {
     }
     const userId = msg.user_id;
     const whitelist = getWhitelistUserIds(cfg);
+    const effectiveAccountId = config.accountId ?? "default";
+    const getConfig = () => getOneBotConfig(api, effectiveAccountId);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
         const denyMsg = "权限不足，请向管理员申请权限";
-        const getConfig = () => getOneBotConfig(api);
         try {
             if (msg.message_type === "group" && msg.group_id)
-                await sendGroupMsg(msg.group_id, denyMsg, getConfig);
+                await sendGroupMsg(msg.group_id, denyMsg, getConfig, effectiveAccountId);
             else
-                await sendPrivateMsg(userId, denyMsg, getConfig);
+                await sendPrivateMsg(userId, denyMsg, getConfig, effectiveAccountId);
         }
         catch (_) { }
         api.logger?.info?.(`[onebot] user ${userId} not in whitelist, denied`);
@@ -235,7 +237,7 @@ export async function processInboundMessage(api, msg) {
         try {
             const history = await getGroupMsgHistory(Number(groupId), {
                 count: groupHistoryLimit,
-            });
+            }, effectiveAccountId);
             if (history && history.length > 0) {
                 // 过滤掉机器人自己的消息，格式化历史消息
                 // getGroupMsgHistory 返回的是倒序的（最新在前），需要反转
@@ -353,7 +355,7 @@ export async function processInboundMessage(api, msg) {
     const clearEmojiReaction = async () => {
         if (emojiAdded && userMessageId != null) {
             try {
-                await setMsgEmojiLike(userMessageId, thinkingEmojiId, false);
+                await setMsgEmojiLike(userMessageId, thinkingEmojiId, false, effectiveAccountId);
             }
             catch { }
             emojiAdded = false;
@@ -362,7 +364,7 @@ export async function processInboundMessage(api, msg) {
     // 纯命令（如 /status）不添加 thinking emoji
     if (userMessageId != null && !isPureCommand) {
         try {
-            await setMsgEmojiLike(userMessageId, thinkingEmojiId, true);
+            await setMsgEmojiLike(userMessageId, thinkingEmojiId, true, effectiveAccountId);
             emojiAdded = true;
         }
         catch {
@@ -380,30 +382,29 @@ export async function processInboundMessage(api, msg) {
         setForwardSuppressDelivery(true);
     const deliveredChunks = [];
     let chunkIndex = 0;
-    const getConfig = () => getOneBotConfig(api);
     const onReplySessionEnd = onebotCfg.onReplySessionEnd;
     const doSendChunk = async (effectiveIsGroup, effectiveGroupId, uid, text, mediaUrl) => {
         let lastMsgId = undefined;
         if (text) {
             if (effectiveIsGroup && effectiveGroupId) {
-                lastMsgId = await sendGroupMsg(effectiveGroupId, text, getConfig);
+                lastMsgId = await sendGroupMsg(effectiveGroupId, text, getConfig, effectiveAccountId);
                 // 记录机器人最后发送的消息 ID，用于下次获取历史消息时定位起点
                 if (lastMsgId != null) {
                     lastBotReplyMsgId.set(effectiveGroupId, lastMsgId);
                 }
             }
             else if (uid)
-                lastMsgId = await sendPrivateMsg(uid, text, getConfig);
+                lastMsgId = await sendPrivateMsg(uid, text, getConfig, effectiveAccountId);
         }
         if (mediaUrl) {
             if (effectiveIsGroup && effectiveGroupId) {
-                lastMsgId = await sendGroupImage(effectiveGroupId, mediaUrl, api.logger, getConfig);
+                lastMsgId = await sendGroupImage(effectiveGroupId, mediaUrl, api.logger, getConfig, effectiveAccountId);
                 if (lastMsgId != null) {
                     lastBotReplyMsgId.set(effectiveGroupId, lastMsgId);
                 }
             }
             else if (uid)
-                lastMsgId = await sendPrivateImage(uid, mediaUrl, api.logger, getConfig);
+                lastMsgId = await sendPrivateImage(uid, mediaUrl, api.logger, getConfig, effectiveAccountId);
         }
         return lastMsgId;
     };
@@ -477,9 +478,9 @@ export async function processInboundMessage(api, msg) {
                                             const imgUrl = await markdownToImage(fullRaw);
                                             if (imgUrl) {
                                                 if (effectiveIsGroup && effectiveGroupId)
-                                                    await sendGroupImage(effectiveGroupId, imgUrl, api.logger, getConfig);
+                                                    await sendGroupImage(effectiveGroupId, imgUrl, api.logger, getConfig, effectiveAccountId);
                                                 else if (uid)
-                                                    await sendPrivateImage(uid, imgUrl, api.logger, getConfig);
+                                                    await sendPrivateImage(uid, imgUrl, api.logger, getConfig, effectiveAccountId);
                                             }
                                             else {
                                                 api.logger?.warn?.("[onebot] og_image: node-html-to-image not installed, falling back to normal send");
@@ -505,21 +506,21 @@ export async function processInboundMessage(api, msg) {
                                         const nodes = [];
                                         for (const c of deliveredChunks) {
                                             if (c.mediaUrl) {
-                                                const mid = await sendPrivateImage(selfId, c.mediaUrl, api.logger, getConfig);
+                                                const mid = await sendPrivateImage(selfId, c.mediaUrl, api.logger, getConfig, effectiveAccountId);
                                                 if (mid)
                                                     nodes.push({ type: "node", data: { id: String(mid) } });
                                             }
                                             else if (c.text) {
-                                                const mid = await sendPrivateMsg(selfId, c.text, getConfig);
+                                                const mid = await sendPrivateMsg(selfId, c.text, getConfig, effectiveAccountId);
                                                 if (mid)
                                                     nodes.push({ type: "node", data: { id: String(mid) } });
                                             }
                                         }
                                         if (nodes.length > 0) {
                                             if (effectiveIsGroup && effectiveGroupId)
-                                                await sendGroupForwardMsg(effectiveGroupId, nodes, getConfig);
+                                                await sendGroupForwardMsg(effectiveGroupId, nodes, getConfig, effectiveAccountId);
                                             else if (uid)
-                                                await sendPrivateForwardMsg(uid, nodes, getConfig);
+                                                await sendPrivateForwardMsg(uid, nodes, getConfig, effectiveAccountId);
                                         }
                                     }
                                     catch (e) {
@@ -586,9 +587,9 @@ export async function processInboundMessage(api, msg) {
         try {
             const { userId: uid, groupId: gid, isGroup: ig } = ctxPayload._onebot || {};
             if (ig && gid)
-                await sendGroupMsg(gid, `处理失败: ${err?.message?.slice(0, 80) || "未知错误"}`);
+                await sendGroupMsg(gid, `处理失败: ${err?.message?.slice(0, 80) || "未知错误"}`, getConfig, effectiveAccountId);
             else if (uid)
-                await sendPrivateMsg(uid, `处理失败: ${err?.message?.slice(0, 80) || "未知错误"}`);
+                await sendPrivateMsg(uid, `处理失败: ${err?.message?.slice(0, 80) || "未知错误"}`, getConfig, effectiveAccountId);
         }
         catch (_) { }
     }

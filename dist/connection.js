@@ -112,13 +112,15 @@ export function stopImageTempCleanup() {
         imageTempCleanupTimer = null;
     }
 }
-let ws = null;
+// 多账号支持：accountId -> WebSocket
+const wsMap = new Map();
 let wsServer = null;
 let httpServer = null;
 const pendingEcho = new Map();
 let echoCounter = 0;
-let connectionReadyResolve = null;
-const connectionReadyPromise = new Promise((r) => { connectionReadyResolve = r; });
+const connectionReadyResolves = new Map();
+const connectionReadyPromises = new Map();
+
 function nextEcho() {
     return `onebot-${Date.now()}-${++echoCounter}`;
 }
@@ -132,6 +134,26 @@ export function handleEchoResponse(payload) {
 }
 function getLogger() {
     return globalThis.__onebotApi?.logger ?? {};
+}
+// 获取指定账号的 WebSocket 连接
+export function getWs(accountId = "default") {
+    return wsMap.get(accountId);
+}
+// 添加 WebSocket 连接
+export function addWs(accountId, ws) {
+    wsMap.set(accountId, ws);
+    const resolve = connectionReadyResolves.get(accountId);
+    if (resolve) resolve();
+}
+// 移除 WebSocket 连接
+export function removeWs(accountId) {
+    wsMap.delete(accountId);
+    connectionReadyResolves.delete(accountId);
+    connectionReadyPromises.delete(accountId);
+}
+// 获取所有已连接的账号
+export function getConnectedAccountIds() {
+    return Array.from(wsMap.keys());
 }
 function sendOneBotAction(wsocket, action, params, log = getLogger()) {
     const echo = nextEcho();
@@ -160,9 +182,6 @@ function sendOneBotAction(wsocket, action, params, log = getLogger()) {
         });
     });
 }
-export function getWs() {
-    return ws;
-}
 /** 为 WebSocket 设置 echo 响应处理（按需连接时需调用，以便 sendOneBotAction 能收到响应） */
 function setupEchoHandler(socket) {
     socket.on("message", (data) => {
@@ -176,18 +195,26 @@ function setupEchoHandler(socket) {
     });
 }
 /** 等待 WebSocket 连接就绪（service 启动后异步建立连接，发送前需先等待） */
-export async function waitForConnection(timeoutMs = 30000) {
+export async function waitForConnection(accountId = "default", timeoutMs = 30000) {
+    const ws = wsMap.get(accountId);
     if (ws && ws.readyState === WebSocket.OPEN)
         return ws;
     const log = getLogger();
-    log.info?.("[onebot] waitForConnection: waiting for WebSocket...");
+    log.info?.(`[onebot] waitForConnection: waiting for WebSocket (accountId=${accountId})...`);
+    // 确保有 promise
+    if (!connectionReadyPromises.has(accountId)) {
+        connectionReadyPromises.set(accountId, new Promise((r) => {
+            connectionReadyResolves.set(accountId, r);
+        }));
+    }
     return Promise.race([
-        connectionReadyPromise.then(() => {
-            if (ws && ws.readyState === WebSocket.OPEN)
-                return ws;
+        connectionReadyPromises.get(accountId).then(() => {
+            const w = wsMap.get(accountId);
+            if (w && w.readyState === WebSocket.OPEN)
+                return w;
             throw new Error("OneBot WebSocket not connected");
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`OneBot WebSocket not connected after ${timeoutMs}ms. Ensure "openclaw gateway run" is running and OneBot (Lagrange.Core) is connected.`)), timeoutMs)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`OneBot WebSocket (accountId=${accountId}) not connected after ${timeoutMs}ms. Ensure "openclaw gateway run" is running and OneBot (Lagrange.Core) is connected.`)), timeoutMs)),
     ]);
 }
 /**
@@ -195,7 +222,8 @@ export async function waitForConnection(timeoutMs = 30000) {
  * forward-websocket 模式直接建立连接（message send 可独立运行）；
  * backward-websocket 模式需等待 gateway 的 service 建立连接。
  */
-export async function ensureConnection(getConfig, timeoutMs = 30000) {
+export async function ensureConnection(getConfig, accountId = "default", timeoutMs = 30000) {
+    const ws = wsMap.get(accountId);
     if (ws && ws.readyState === WebSocket.OPEN)
         return ws;
     const config = getConfig();
@@ -203,15 +231,15 @@ export async function ensureConnection(getConfig, timeoutMs = 30000) {
         throw new Error("OneBot not configured");
     const log = getLogger();
     if (config.type === "forward-websocket") {
-        log.info?.("[onebot] 连接 OneBot (forward-websocket)...");
+        log.info?.(`[onebot] 连接 OneBot (forward-websocket, accountId=${accountId})...`);
         const socket = await connectForward(config);
         setupEchoHandler(socket);
-        setWs(socket);
+        addWs(accountId, socket);
         return socket;
     }
-    return waitForConnection(timeoutMs);
+    return waitForConnection(accountId, timeoutMs);
 }
-export async function sendPrivateMsg(userId, text, getConfig) {
+export async function sendPrivateMsg(userId, text, getConfig, accountId = "default") {
     if (shouldBlockSendInForwardMode("private", userId)) {
         logSend("connection", "sendPrivateMsg", { targetId: userId, blocked: true, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
         return undefined;
@@ -225,8 +253,8 @@ export async function sendPrivateMsg(userId, text, getConfig) {
         replySessionId: getActiveReplySessionId(),
     });
     const socket = getConfig
-        ? await ensureConnection(getConfig)
-        : await waitForConnection();
+        ? await ensureConnection(getConfig, accountId)
+        : await waitForConnection(accountId);
     const res = await sendOneBotAction(socket, "send_private_msg", { user_id: userId, message: text });
     if (res?.retcode !== 0) {
         throw new Error(res?.msg ?? `OneBot send_private_msg failed (retcode=${res?.retcode})`);
@@ -235,7 +263,7 @@ export async function sendPrivateMsg(userId, text, getConfig) {
     logSend("connection", "sendPrivateMsg", { targetId: userId, messageId: mid, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
     return mid;
 }
-export async function sendGroupMsg(groupId, text, getConfig) {
+export async function sendGroupMsg(groupId, text, getConfig, accountId = "default") {
     if (shouldBlockSendInForwardMode("group", groupId)) {
         logSend("connection", "sendGroupMsg", { targetId: groupId, blocked: true, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
         return undefined;
@@ -249,8 +277,8 @@ export async function sendGroupMsg(groupId, text, getConfig) {
         replySessionId: getActiveReplySessionId(),
     });
     const socket = getConfig
-        ? await ensureConnection(getConfig)
-        : await waitForConnection();
+        ? await ensureConnection(getConfig, accountId)
+        : await waitForConnection(accountId);
     const res = await sendOneBotAction(socket, "send_group_msg", { group_id: groupId, message: text });
     if (res?.retcode !== 0) {
         throw new Error(res?.msg ?? `OneBot send_group_msg failed (retcode=${res?.retcode})`);
@@ -259,7 +287,7 @@ export async function sendGroupMsg(groupId, text, getConfig) {
     logSend("connection", "sendGroupMsg", { targetId: groupId, messageId: mid, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
     return mid;
 }
-export async function sendGroupImage(groupId, image, log = getLogger(), getConfig) {
+export async function sendGroupImage(groupId, image, log = getLogger(), getConfig, accountId = "default") {
     if (shouldBlockSendInForwardMode("group", groupId)) {
         logSend("connection", "sendGroupImage", { targetId: groupId, blocked: true, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
         return undefined;
@@ -272,7 +300,7 @@ export async function sendGroupImage(groupId, image, log = getLogger(), getConfi
         replySessionId: getActiveReplySessionId(),
     });
     log.info?.(`[onebot] sendGroupImage entry: groupId=${groupId} image=${image?.slice?.(0, 80) ?? ""}`);
-    const socket = getConfig ? await ensureConnection(getConfig) : await waitForConnection();
+    const socket = getConfig ? await ensureConnection(getConfig, accountId) : await waitForConnection(accountId);
     log.info?.(`222[onebot] sendGroupImage entry: groupId=${groupId} image=${image?.slice?.(0, 80) ?? ""}`);
     try {
         const filePath = image.startsWith("[") ? null : await resolveImageToLocalPath(image);
@@ -294,7 +322,7 @@ export async function sendGroupImage(groupId, image, log = getLogger(), getConfi
     }
 }
 /** 发送群合并转发消息。messages 为节点数组，每节点 { type: "node", data: { id } } 或 { type: "node", data: { user_id, nickname, content } } */
-export async function sendGroupForwardMsg(groupId, messages, getConfig) {
+export async function sendGroupForwardMsg(groupId, messages, getConfig, accountId = "default") {
     logSend("connection", "sendGroupForwardMsg", {
         targetType: "group",
         targetId: groupId,
@@ -303,14 +331,14 @@ export async function sendGroupForwardMsg(groupId, messages, getConfig) {
         sessionId: getActiveReplyTarget(),
         replySessionId: getActiveReplySessionId(),
     });
-    const socket = getConfig ? await ensureConnection(getConfig) : await waitForConnection();
+    const socket = getConfig ? await ensureConnection(getConfig, accountId) : await waitForConnection(accountId);
     const res = await sendOneBotAction(socket, "send_group_forward_msg", { group_id: groupId, messages });
     if (res?.retcode !== 0) {
         throw new Error(res?.msg ?? `OneBot send_group_forward_msg failed (retcode=${res?.retcode})`);
     }
 }
 /** 发送私聊合并转发消息 */
-export async function sendPrivateForwardMsg(userId, messages, getConfig) {
+export async function sendPrivateForwardMsg(userId, messages, getConfig, accountId = "default") {
     logSend("connection", "sendPrivateForwardMsg", {
         targetType: "user",
         targetId: userId,
@@ -319,13 +347,13 @@ export async function sendPrivateForwardMsg(userId, messages, getConfig) {
         sessionId: getActiveReplyTarget(),
         replySessionId: getActiveReplySessionId(),
     });
-    const socket = getConfig ? await ensureConnection(getConfig) : await waitForConnection();
+    const socket = getConfig ? await ensureConnection(getConfig, accountId) : await waitForConnection(accountId);
     const res = await sendOneBotAction(socket, "send_private_forward_msg", { user_id: userId, messages });
     if (res?.retcode !== 0) {
         throw new Error(res?.msg ?? `OneBot send_private_forward_msg failed (retcode=${res?.retcode})`);
     }
 }
-export async function sendPrivateImage(userId, image, log = getLogger(), getConfig) {
+export async function sendPrivateImage(userId, image, log = getLogger(), getConfig, accountId = "default") {
     if (shouldBlockSendInForwardMode("private", userId)) {
         logSend("connection", "sendPrivateImage", { targetId: userId, blocked: true, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
         return undefined;
@@ -338,7 +366,7 @@ export async function sendPrivateImage(userId, image, log = getLogger(), getConf
         replySessionId: getActiveReplySessionId(),
     });
     log.info?.(`[onebot] sendPrivateImage entry: userId=${userId} image=${image?.slice?.(0, 80) ?? ""}`);
-    const socket = getConfig ? await ensureConnection(getConfig) : await waitForConnection();
+    const socket = getConfig ? await ensureConnection(getConfig, accountId) : await waitForConnection(accountId);
     const filePath = image.startsWith("[") ? null : await resolveImageToLocalPath(image);
     const seg = image.startsWith("[")
         ? JSON.parse(image)
@@ -352,18 +380,21 @@ export async function sendPrivateImage(userId, image, log = getLogger(), getConf
     logSend("connection", "sendPrivateImage", { targetId: userId, messageId: mid, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
     return mid;
 }
-export async function uploadGroupFile(groupId, file, name) {
+export async function uploadGroupFile(groupId, file, name, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         throw new Error("OneBot WebSocket not connected");
     await sendOneBotAction(ws, "upload_group_file", { group_id: groupId, file, name });
 }
-export async function uploadPrivateFile(userId, file, name) {
+export async function uploadPrivateFile(userId, file, name, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         throw new Error("OneBot WebSocket not connected");
     await sendOneBotAction(ws, "upload_private_file", { user_id: userId, file, name });
 }
 /** 撤回消息 */
-export async function deleteMsg(messageId) {
+export async function deleteMsg(messageId, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         throw new Error("OneBot WebSocket not connected");
     await sendOneBotAction(ws, "delete_msg", { message_id: messageId });
@@ -374,13 +405,15 @@ export async function deleteMsg(messageId) {
  * @param emoji_id 表情 ID，1 通常为点赞
  * @param is_set true 添加，false 取消
  */
-export async function setMsgEmojiLike(message_id, emoji_id, is_set = true) {
+export async function setMsgEmojiLike(message_id, emoji_id, is_set = true, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         throw new Error("OneBot WebSocket not connected");
     await sendOneBotAction(ws, "set_msg_emoji_like", { message_id, emoji_id, is_set });
 }
 /** 获取陌生人信息（含 nickname） */
-export async function getStrangerInfo(userId) {
+export async function getStrangerInfo(userId, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         return null;
     try {
@@ -394,7 +427,8 @@ export async function getStrangerInfo(userId) {
     }
 }
 /** 获取群成员信息（含 nickname、card） */
-export async function getGroupMemberInfo(groupId, userId) {
+export async function getGroupMemberInfo(groupId, userId, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         return null;
     try {
@@ -409,7 +443,8 @@ export async function getGroupMemberInfo(groupId, userId) {
     }
 }
 /** 获取群信息（含 group_name） */
-export async function getGroupInfo(groupId) {
+export async function getGroupInfo(groupId, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         return null;
     try {
@@ -427,7 +462,8 @@ export function getAvatarUrl(userId, size = 640) {
     return `https://q1.qlogo.cn/g?b=qq&nk=${userId}&s=${size}`;
 }
 /** 获取单条消息（需 OneBot 实现支持） */
-export async function getMsg(messageId) {
+export async function getMsg(messageId, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         return null;
     try {
@@ -445,7 +481,8 @@ export async function getMsg(messageId) {
  * @param groupId 群号
  * @param opts message_seq 起始序号；message_id 起始消息 ID；count 数量
  */
-export async function getGroupMsgHistory(groupId, opts = { count: 20 }) {
+export async function getGroupMsgHistory(groupId, opts = { count: 20 }, accountId = "default") {
+    const ws = wsMap.get(accountId);
     if (!ws || ws.readyState !== WebSocket.OPEN)
         return [];
     try {
@@ -495,18 +532,21 @@ export async function createServerAndWait(config) {
         });
     });
 }
-export function setWs(socket) {
-    ws = socket;
-    if (socket && socket.readyState === WebSocket.OPEN && connectionReadyResolve) {
-        connectionReadyResolve();
-        connectionReadyResolve = null;
-    }
+/** @deprecated 使用 addWs(accountId, ws) 代替 */
+export function setWs(socket, accountId = "default") {
+    addWs(accountId, socket);
 }
 export function stopConnection() {
-    if (ws) {
-        ws.close();
-        ws = null;
+    // 关闭所有 WebSocket 连接
+    for (const [accountId, ws] of wsMap) {
+        try {
+            ws.close();
+        }
+        catch { }
     }
+    wsMap.clear();
+    connectionReadyResolves.clear();
+    connectionReadyPromises.clear();
     if (wsServer) {
         wsServer.close();
         wsServer = null;
