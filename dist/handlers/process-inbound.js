@@ -95,6 +95,7 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     
     const isGroup = msg.message_type === "group";
     const groupId = msg.group_id;
+    const userId = String(msg.user_id ?? 0);
     const now = Date.now();
     
     // 检查 AI 是否已经回复过此消息（避免重复回复）
@@ -167,7 +168,6 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     if (/^\/[a-zA-Z0-9_-]+$/.test(cmdText)) {
         messageText = cmdText;
     }
-    const userId = msg.user_id;
     const whitelist = getWhitelistUserIds();
     const getConfig = () => getOneBotConfig(api, effectiveAccountId);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
