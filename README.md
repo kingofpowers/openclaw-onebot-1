@@ -15,6 +15,73 @@
 
 ---
 
+## ⚠️ 安全配置（必读）
+
+### Owner 权限控制
+
+**强烈建议配置 owner，防止未授权用户控制 AI 执行敏感操作！**
+
+```json
+{
+  "owner": {
+    "name": "你的名字",
+    "userIds": {
+      "onebot": ["你的QQ号"]
+    }
+  }
+}
+```
+
+**权限边界**：
+
+| 操作 | 所有人 | 仅 Owner |
+|------|--------|----------|
+| 回复消息 | ✅ | |
+| 读取文件 | ✅ | |
+| 修改工作空间文件 | ✅ | |
+| 修改配置文件 | | ✅ |
+| 执行 shell 命令 | | ✅ |
+| 外部操作（邮件/推文） | | ✅ |
+
+### Agent 沙箱隔离
+
+**为不同 agent 设置文件访问权限，防止越权访问敏感数据！**
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "workspaceAccess": "ro"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "sandbox": { "workspaceAccess": "rw" }
+      },
+      {
+        "id": "finance",
+        "sandbox": { "workspaceAccess": "ro" }
+      }
+    ]
+  }
+}
+```
+
+| workspaceAccess | 说明 |
+|-----------------|------|
+| `none` | 无文件系统访问 |
+| `ro` | 只读访问（默认推荐） |
+| `rw` | 读写访问 |
+
+**推荐配置**：
+- 默认使用 `ro`（只读）
+- 只给信任的 agent 开启 `rw` 权限
+- 敏感数据隔离在不同 agent 工作空间
+
+---
+
 ## 教程
 
 📖 **完整安装与配置教程**：[让 QQ 接入 openclaw！让你的助手掌管千人大群](https://kirigaya.cn/blog/article?seq=368)
