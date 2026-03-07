@@ -110,7 +110,6 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     }
     const userId = msg.user_id;
     const whitelist = getWhitelistUserIds(cfg);
-    const effectiveAccountId = config.accountId ?? "default";
     const getConfig = () => getOneBotConfig(api, effectiveAccountId);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
         const denyMsg = "权限不足，请向管理员申请权限";
