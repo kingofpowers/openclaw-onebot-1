@@ -1,6 +1,52 @@
 /**
  * OneBot 配置解析
  */
+import { readFileSync, existsSync } from "fs";
+
+// 配置文件缓存（带过期时间）
+let cachedConfig = null;
+let cacheTime = 0;
+const CACHE_TTL_MS = 5000; // 5 秒缓存
+
+/**
+ * 从文件读取最新配置（带缓存）
+ */
+export function getLiveConfig() {
+    const now = Date.now();
+    if (cachedConfig && (now - cacheTime) < CACHE_TTL_MS) {
+        return cachedConfig;
+    }
+    
+    const possiblePaths = [
+        process.env.OPENCLAW_CONFIG,
+        "/home/node/.openclaw/openclaw.json",
+        "/app/openclaw.json",
+    ].filter(Boolean);
+    
+    for (const path of possiblePaths) {
+        try {
+            if (existsSync(path)) {
+                const content = readFileSync(path, "utf-8");
+                cachedConfig = JSON.parse(content);
+                cacheTime = now;
+                return cachedConfig;
+            }
+        } catch {
+            continue;
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * 获取实时的 OneBot channel 配置（从文件读取，支持热加载）
+ */
+export function getLiveOneBotChannelConfig() {
+    const cfg = getLiveConfig();
+    return cfg?.channels?.onebot ?? {};
+}
+
 export function getOneBotConfig(api, accountId) {
     const cfg = api?.config ?? globalThis.__onebotGatewayConfig;
     const id = accountId ?? "default";
@@ -52,17 +98,20 @@ export function getOneBotConfig(api, accountId) {
 }
 /** 是否将机器人回复中的 Markdown 渲染为纯文本再发送，默认 true */
 export function getRenderMarkdownToPlain(cfg) {
-    const v = cfg?.channels?.onebot?.renderMarkdownToPlain;
+    const c = cfg ?? getLiveConfig();
+    const v = c?.channels?.onebot?.renderMarkdownToPlain;
     return v === undefined ? true : Boolean(v);
 }
 /** 是否将连续多个换行压缩为单个换行，默认 true（AI 常输出 \n\n 导致双空行） */
 export function getCollapseDoubleNewlines(cfg) {
-    const v = cfg?.channels?.onebot?.collapseDoubleNewlines;
+    const c = cfg ?? getLiveConfig();
+    const v = c?.channels?.onebot?.collapseDoubleNewlines;
     return v === undefined ? true : Boolean(v);
 }
 /** 白名单 QQ 号列表，为空则所有人可回复；非空则仅白名单内用户可触发 AI */
 export function getWhitelistUserIds(cfg) {
-    const v = cfg?.channels?.onebot?.whitelistUserIds;
+    const c = cfg ?? getLiveConfig();
+    const v = c?.channels?.onebot?.whitelistUserIds;
     if (!Array.isArray(v))
         return [];
     return v.filter((x) => typeof x === "number" || (typeof x === "string" && /^\d+$/.test(x))).map((x) => Number(x));

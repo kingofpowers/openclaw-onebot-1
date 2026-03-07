@@ -1,7 +1,7 @@
 /**
  * 入站消息处理
  */
-import { getOneBotConfig } from "../config.js";
+import { getOneBotConfig, getLiveConfig, getLiveOneBotChannelConfig } from "../config.js";
 import { getRawText, getTextFromSegments, getReplyMessageId, getTextFromMessageContent, isMentioned, } from "../message.js";
 import { getRenderMarkdownToPlain, getCollapseDoubleNewlines, getWhitelistUserIds } from "../config.js";
 import { markdownToPlain, collapseDoubleNewlines } from "../markdown.js";
@@ -80,7 +80,9 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     }
     const isGroup = msg.message_type === "group";
     const groupId = msg.group_id;
-    const cfg = api.config;
+    
+    // 从文件读取最新配置（支持热加载）
+    const cfg = getLiveConfig() ?? api.config;
     const onebotCfg = cfg?.channels?.onebot ?? {};
     const accountConfig = onebotCfg.accounts?.[effectiveAccountId] ?? {};
     
@@ -106,7 +108,7 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         api.logger?.info?.(`[onebot] ignoring group message without @mention`);
         return;
     }
-    const gi = cfg?.channels?.onebot?.groupIncrease;
+    const gi = onebotCfg.groupIncrease;
     // 测试欢迎：@ 机器人并发送 /group-increase，模拟当前发送者入群，触发欢迎（使用该人的 id、nickname 等）
     // 使用 getTextFromSegments 提取纯文本，避免 raw_message 中 [CQ:at,qq=xxx] 等 CQ 码导致匹配失败
     const cmdText = getTextFromSegments(msg).trim() || messageText.trim();
@@ -130,7 +132,7 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         messageText = cmdText;
     }
     const userId = msg.user_id;
-    const whitelist = getWhitelistUserIds(cfg);
+    const whitelist = getWhitelistUserIds();
     const getConfig = () => getOneBotConfig(api, effectiveAccountId);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
         const denyMsg = "权限不足，请向管理员申请权限";
@@ -472,9 +474,9 @@ export async function processInboundMessage(api, msg, accountId = "default") {
                     const groupMatch = sessionKey.match(/^onebot:group:(\d+)$/i);
                     const effectiveIsGroup = groupMatch != null || Boolean(ig);
                     const effectiveGroupId = (groupMatch ? parseInt(groupMatch[1], 10) : undefined) ?? gid;
-                    const usePlain = getRenderMarkdownToPlain(cfg);
+                    const usePlain = getRenderMarkdownToPlain();
                     let textPlain = usePlain ? markdownToPlain(trimmed) : trimmed;
-                    if (getCollapseDoubleNewlines(cfg))
+                    if (getCollapseDoubleNewlines())
                         textPlain = collapseDoubleNewlines(textPlain);
                     deliveredChunks.push({
                         index: chunkIndex++,
