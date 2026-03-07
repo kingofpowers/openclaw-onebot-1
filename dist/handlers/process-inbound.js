@@ -117,18 +117,97 @@ export async function processInboundMessage(api, msg) {
     const sessionId = isGroup
         ? `onebot:group:${groupId}`.toLowerCase()
         : `onebot:${userId}`.toLowerCase();
+    const peerInfo = {
+        kind: isGroup ? "group" : "direct",
+        id: isGroup ? String(groupId) : String(userId),
+    };
+    api.logger?.info?.(`[onebot] resolveAgentRoute: channel=onebot, accountId=${config.accountId ?? "default"}, peer=${JSON.stringify(peerInfo)}`);
     const route = runtime.channel.routing?.resolveAgentRoute?.({
         cfg,
         sessionKey: sessionId,
         channel: "onebot",
         accountId: config.accountId ?? "default",
-    }) ?? { agentId: "main" };
+        peer: peerInfo,
+    }) ?? { agentId: "main", sessionKey: sessionId };
+    api.logger?.info?.(`[onebot] resolved agentId: ${route.agentId}, sessionKey: ${route.sessionKey}`);
+    // 使用 route.sessionKey（包含 agent 信息）
+    const effectiveSessionKey = route.sessionKey || sessionId;
     const storePath = runtime.channel.session?.resolveStorePath?.(cfg?.session?.store, {
         agentId: route.agentId,
     }) ?? "";
     const envelopeOptions = runtime.channel.reply?.resolveEnvelopeFormatOptions?.(cfg) ?? {};
     const chatType = isGroup ? "group" : "direct";
     const fromLabel = String(userId);
+    
+    // 提取消息中的图片 URL
+    const imageUrls = [];
+    if (Array.isArray(msg.message)) {
+        for (const seg of msg.message) {
+            if (seg?.type === "image") {
+                const url = seg.data?.url || seg.data?.file;
+                if (url) imageUrls.push(url);
+            }
+        }
+    }
+    
+    // 下载图片并保存到临时目录
+    const mediaPaths = [];
+    const mediaTypes = [];
+    const IMAGE_TEMP_DIR = "/tmp/onebot-images";
+    
+    if (imageUrls.length > 0) {
+        const fs = await import("fs");
+        const path = await import("path");
+        
+        // 确保临时目录存在
+        try {
+            fs.mkdirSync(IMAGE_TEMP_DIR, { recursive: true });
+        } catch (e) {}
+        
+        for (let i = 0; i < imageUrls.length; i++) {
+            const imgUrl = imageUrls[i];
+            try {
+                let buf;
+                if (imgUrl.startsWith("http")) {
+                    const https = await import("https");
+                    buf = await new Promise((resolve, reject) => {
+                        const req = https.get(imgUrl, { timeout: 10000 }, (res) => {
+                            const chunks = [];
+                            res.on("data", (c) => chunks.push(c));
+                            res.on("end", () => resolve(Buffer.concat(chunks)));
+                            res.on("error", reject);
+                        });
+                        req.on("error", reject);
+                        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+                    });
+                } else if (imgUrl.startsWith("file://")) {
+                    buf = fs.readFileSync(imgUrl.slice(7));
+                }
+                
+                if (buf && buf.length > 0) {
+                    // 检测图片类型
+                    const header = buf.slice(0, 4).toString('hex');
+                    let ext = 'png';
+                    let mediaType = 'image/png';
+                    if (header.startsWith('ffd8')) { ext = 'jpg'; mediaType = 'image/jpeg'; }
+                    else if (header.startsWith('474946')) { ext = 'gif'; mediaType = 'image/gif'; }
+                    else if (header.startsWith('524946')) { ext = 'webp'; mediaType = 'image/webp'; }
+                    
+                    // 保存到临时文件
+                    const fileName = `img-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+                    const filePath = path.join(IMAGE_TEMP_DIR, fileName);
+                    fs.writeFileSync(filePath, buf);
+                    
+                    mediaPaths.push(filePath);
+                    mediaTypes.push(mediaType);
+                    api.logger?.info?.(`[onebot] saved image to ${filePath}, size: ${buf.length} bytes`);
+                }
+            } catch (e) {
+                api.logger?.warn?.(`[onebot] failed to download/save image: ${e?.message}`);
+            }
+        }
+    }
+    
     const formattedBody = runtime.channel.reply?.formatInboundEnvelope?.({
         channel: "OneBot",
         from: fromLabel,
@@ -138,6 +217,7 @@ export async function processInboundMessage(api, msg) {
         sender: { name: fromLabel, id: String(userId) },
         envelope: envelopeOptions,
     }) ?? { content: [{ type: "text", text: messageText }] };
+    
     // 群聊被 @ 时获取历史消息作为上下文
     const onebotCfg = cfg?.channels?.onebot ?? {};
     const groupHistoryOnMention = onebotCfg.groupHistoryOnMention ?? false;
@@ -214,7 +294,8 @@ export async function processInboundMessage(api, msg) {
         RawBody: finalRawBody,
         From: isGroup ? `onebot:group:${groupId}` : `onebot:${userId}`,
         To: replyTarget,
-        SessionKey: sessionId,
+        SessionKey: effectiveSessionKey,
+        AgentId: route.agentId,
         AccountId: config.accountId ?? "default",
         ChatType: chatType,
         ConversationLabel: replyTarget, // 与 Feishu 一致：表示会话/回复目标，群聊时为 group:群号，非 SenderId
@@ -227,6 +308,10 @@ export async function processInboundMessage(api, msg) {
         OriginatingChannel: "onebot",
         OriginatingTo: replyTarget,
         CommandAuthorized: true,
+        // 媒体附件
+        MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+        MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+        MediaType: mediaTypes.length > 0 ? mediaTypes[0] : undefined,
         DeliveryContext: {
             channel: "onebot",
             to: replyTarget,
@@ -234,12 +319,17 @@ export async function processInboundMessage(api, msg) {
         },
         _onebot: { userId, groupId, isGroup },
     };
+    // 调试日志
+    if (mediaPaths.length > 0) {
+        api.logger?.info?.(`[onebot] ctxPayload.MediaPaths: ${JSON.stringify(mediaPaths)}`);
+        api.logger?.info?.(`[onebot] ctxPayload.MediaTypes: ${JSON.stringify(mediaTypes)}`);
+    }
     if (runtime.channel.session?.recordInboundSession) {
         await runtime.channel.session.recordInboundSession({
             storePath,
-            sessionKey: sessionId,
+            sessionKey: effectiveSessionKey,
             ctx: ctxPayload,
-            updateLastRoute: !isGroup ? { sessionKey: sessionId, channel: "onebot", to: String(userId), accountId: config.accountId ?? "default" } : undefined,
+            updateLastRoute: !isGroup ? { sessionKey: effectiveSessionKey, channel: "onebot", to: String(userId), accountId: config.accountId ?? "default" } : undefined,
             onRecordError: (err) => api.logger?.warn?.(`[onebot] recordInboundSession: ${err}`),
         });
     }
@@ -267,10 +357,10 @@ export async function processInboundMessage(api, msg) {
             api.logger?.warn?.("[onebot] setMsgEmojiLike failed (maybe OneBot doesn't support it)");
         }
     }
-    api.logger?.info?.(`[onebot] dispatching message for session ${sessionId}`);
+    api.logger?.info?.(`[onebot] dispatching message for session ${effectiveSessionKey} (agent: ${route.agentId})`);
     const longMessageMode = onebotCfg.longMessageMode ?? "normal";
     const longMessageThreshold = onebotCfg.longMessageThreshold ?? 300;
-    const replySessionId = `onebot-reply-${Date.now()}-${sessionId}`;
+    const replySessionId = `onebot-reply-${Date.now()}-${effectiveSessionKey}`;
     setActiveReplyTarget(replyTarget);
     setActiveReplySessionId(replySessionId);
     setActiveReplySelfId(selfId);
@@ -311,6 +401,7 @@ export async function processInboundMessage(api, msg) {
             cfg,
             dispatcherOptions: {
                 deliver: async (payload, info) => {
+                    api.logger?.info?.(`[onebot] deliver called, kind=${info?.kind}, textLen=${typeof payload === "string" ? payload.length : (payload?.text?.length ?? 0)}`);
                     await clearEmojiReaction();
                     const p = payload;
                     const replyText = typeof p === "string" ? p : (p?.text ?? p?.body ?? "");
