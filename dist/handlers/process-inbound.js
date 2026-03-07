@@ -231,6 +231,7 @@ export async function processInboundMessage(api, msg) {
             if (history && history.length > 0) {
                 // 过滤掉机器人自己的消息，格式化历史消息
                 // getGroupMsgHistory 返回的是倒序的（最新在前），需要反转
+                // 过滤掉机器人消息和 slash 命令消息（以 / 开头）
                 historyContext = history
                     .filter((m) => Number(m.user_id) !== Number(selfId))
                     .reverse() // 反转为正序（旧 -> 新）
@@ -239,7 +240,8 @@ export async function processInboundMessage(api, msg) {
                         const senderId = String(m.user_id);
                         const senderName = m.sender?.nickname ?? m.sender?.card ?? senderId;
                         return { senderId, senderName, text, timestamp: m.time };
-                    });
+                    })
+                    .filter((m) => m.text && !m.text.trim().startsWith('/'));
                 api.logger?.info?.(`[onebot] fetched ${historyContext.length} history messages for group ${groupId}`);
             }
         }
