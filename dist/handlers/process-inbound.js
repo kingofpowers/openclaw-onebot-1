@@ -79,8 +79,16 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         return;
     }
     const isGroup = msg.message_type === "group";
+    const groupId = msg.group_id;
     const cfg = api.config;
-    const requireMention = cfg?.channels?.onebot?.requireMention ?? true;
+    // 群级别的 requireMention 可以覆盖全局配置
+    let requireMention = cfg?.channels?.onebot?.requireMention ?? true;
+    if (isGroup && groupId) {
+        const groupConfig = cfg?.channels?.onebot?.groups?.[String(groupId)];
+        if (groupConfig && typeof groupConfig.requireMention === "boolean") {
+            requireMention = groupConfig.requireMention;
+        }
+    }
     if (isGroup && requireMention && !isMentioned(msg, selfId)) {
         api.logger?.info?.(`[onebot] ignoring group message without @mention`);
         return;
@@ -123,7 +131,6 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         api.logger?.info?.(`[onebot] user ${userId} not in whitelist, denied`);
         return;
     }
-    const groupId = msg.group_id;
     const sessionId = isGroup
         ? `onebot:group:${groupId}`.toLowerCase()
         : `onebot:${userId}`.toLowerCase();
