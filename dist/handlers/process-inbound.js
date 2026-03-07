@@ -92,17 +92,22 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     // 全局群配置
     if (isGroup && groupId && onebotCfg.groups?.[String(groupId)]?.requireMention !== undefined) {
         requireMention = onebotCfg.groups[String(groupId)].requireMention;
+        console.log(`[onebot] requireMention from global group: ${requireMention}`);
     }
     
     // 账号配置（覆盖全局）
     if (accountConfig.requireMention !== undefined) {
         requireMention = accountConfig.requireMention;
+        console.log(`[onebot] requireMention from account: ${requireMention}`);
     }
     
     // 账号群配置（最高优先级）
     if (isGroup && groupId && accountConfig.groups?.[String(groupId)]?.requireMention !== undefined) {
         requireMention = accountConfig.groups[String(groupId)].requireMention;
+        console.log(`[onebot] requireMention from account group: ${requireMention}`);
     }
+    
+    console.log(`[onebot] final requireMention: ${requireMention} (accountId=${effectiveAccountId}, groupId=${groupId})`);
     
     if (isGroup && requireMention && !isMentioned(msg, selfId)) {
         api.logger?.info?.(`[onebot] ignoring group message without @mention`);

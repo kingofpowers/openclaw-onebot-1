@@ -147,7 +147,8 @@ async function startConfigWatcher(api) {
     log.info?.(`[onebot] watching config file: ${configPath}`);
     
     configWatcher = watch(configPath, (eventType) => {
-        if (eventType === "change") {
+        log.info?.(`[onebot] config file event: ${eventType}`);
+        if (eventType === "change" || eventType === "rename") {
             log.info?.(`[onebot] config file changed, invalidating cache...`);
             // 清除配置缓存，下次读取时会重新加载
             invalidateConfigCache();
