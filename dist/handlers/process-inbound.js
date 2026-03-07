@@ -98,22 +98,20 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     const userId = String(msg.user_id ?? 0);
     const now = Date.now();
     
-    // 跨账号去重：同一个群的消息，不管哪个账号收到，都应该共享同一个去重缓存
-    // 这样可以避免多个账号同时响应同一条消息
+    // 跨账号去重：同一个群的同一条消息，只处理一次
+    // 这样可以避免多个账号（main、macro）同时响应同一条消息
     const dedupeKey = isGroup ? `group:${groupId}` : `${effectiveAccountId}:user:${userId}`;
     const replyCache = lastReplies.get(dedupeKey) || {};
     const userLastMsg = replyCache[userId];
     
-    if (userLastMsg && userLastMsg.text === messageText && (now - userLastMsg.replyTime) < LAST_REPLY_TTL_MS) {
-        api.logger?.info?.(`[onebot] skipping already-replied message from ${userId} in ${dedupeKey}: ${messageText.slice(0, 50)}...`);
-        return;
-    }
-    
-    // 如果是错误消息，检查是否重复
-    if (isErrorLike) {
-        // 错误消息总是跳过重复
-        if (userLastMsg && userLastMsg.text === messageText) {
-            api.logger?.info?.(`[onebot] ignoring duplicate error message: ${messageText.slice(0, 50)}...`);
+    // 对于普通消息：如果已经回复过相同内容，跳过（避免重复响应）
+    // 对于错误消息：总是跳过重复
+    if (userLastMsg && userLastMsg.text === messageText) {
+        const timeDiff = now - userLastMsg.replyTime;
+        // 普通消息：5 分钟内重复才跳过
+        // 错误消息：始终跳过
+        if (isErrorLike || timeDiff < LAST_REPLY_TTL_MS) {
+            api.logger?.info?.(`[onebot] skipping duplicate message from ${userId} in ${dedupeKey} (errorLike=${isErrorLike}, timeDiff=${timeDiff}ms)`);
             return;
         }
     }
@@ -678,17 +676,15 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         catch (_) { }
     }
     finally {
-        // 记录此次回复（消息处理完成后缓存）
+        // 记录此次处理（不管是否有回复）
         // 跨账号去重：使用与检测时相同的 key
-        if (deliveredChunks.length > 0) {
-            const dedupeKey = isGroup ? `group:${groupId}` : `${effectiveAccountId}:user:${userId}`;
-            const replyCache = lastReplies.get(dedupeKey) || {};
-            replyCache[userId] = {
-                text: messageText,
-                replyTime: Date.now(),
-            };
-            lastReplies.set(dedupeKey, replyCache);
-        }
+        const dedupeKey = isGroup ? `group:${groupId}` : `${effectiveAccountId}:user:${userId}`;
+        const replyCache = lastReplies.get(dedupeKey) || {};
+        replyCache[userId] = {
+            text: messageText,
+            replyTime: Date.now(),
+        };
+        lastReplies.set(dedupeKey, replyCache);
         
         setForwardSuppressDelivery(false);
         setActiveReplySelfId(null);
