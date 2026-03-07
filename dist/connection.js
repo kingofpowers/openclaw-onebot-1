@@ -223,35 +223,21 @@ export async function waitForConnection(accountId = "default", timeoutMs = 30000
  * backward-websocket 模式需等待 gateway 的 service 建立连接。
  */
 export async function ensureConnection(getConfig, accountId = "default", timeoutMs = 30000) {
-    const log = getLogger();
-    log.info?.(`[onebot] ensureConnection: requested accountId=${accountId}`);
-    
     const ws = wsMap.get(accountId);
     if (ws && ws.readyState === WebSocket.OPEN) {
-        log.info?.(`[onebot] ensureConnection: found existing connection for accountId=${accountId}`);
         return ws;
     }
-    
     const config = getConfig();
-    if (!config) {
-        log.error?.(`[onebot] ensureConnection: no config for accountId=${accountId}`);
+    if (!config)
         throw new Error(`OneBot not configured for accountId=${accountId}`);
-    }
-    
-    log.info?.(`[onebot] ensureConnection: accountId=${accountId}, config.accountId=${config.accountId}, config.type=${config.type}`);
-    
+    const log = getLogger();
     if (config.type === "forward-websocket") {
-        // 确保配置的 accountId 与请求的一致
-        if (config.accountId !== accountId) {
-            log.error?.(`[onebot] ensureConnection: config.accountId mismatch! requested=${accountId}, config=${config.accountId}`);
-        }
         log.info?.(`[onebot] 连接 OneBot (forward-websocket, accountId=${accountId})...`);
         const socket = await connectForward(config);
         setupEchoHandler(socket);
         addWs(accountId, socket);
         return socket;
     }
-    log.info?.(`[onebot] ensureConnection: backward-websocket mode, waiting for connection...`);
     return waitForConnection(accountId, timeoutMs);
 }
 export async function sendPrivateMsg(userId, text, getConfig, accountId = "default") {
@@ -283,8 +269,6 @@ export async function sendGroupMsg(groupId, text, getConfig, accountId = "defaul
         logSend("connection", "sendGroupMsg", { targetId: groupId, blocked: true, sessionId: getActiveReplyTarget(), replySessionId: getActiveReplySessionId() });
         return undefined;
     }
-    const log = getLogger();
-    log.info?.(`[onebot] sendGroupMsg: groupId=${groupId}, accountId=${accountId}, textLen=${text?.length}`);
     logSend("connection", "sendGroupMsg", {
         targetType: "group",
         targetId: groupId,
@@ -292,17 +276,11 @@ export async function sendGroupMsg(groupId, text, getConfig, accountId = "defaul
         textLen: text?.length,
         sessionId: getActiveReplyTarget(),
         replySessionId: getActiveReplySessionId(),
+        accountId,
     });
     const socket = getConfig
         ? await ensureConnection(getConfig, accountId)
         : await waitForConnection(accountId);
-    
-    // 验证 socket 来自正确的账号
-    const actualAccountId = [...wsMap.entries()].find(([, ws]) => ws === socket)?.[0];
-    if (actualAccountId && actualAccountId !== accountId) {
-        log.warn?.(`[onebot] sendGroupMsg: socket accountId mismatch! expected=${accountId}, actual=${actualAccountId}`);
-    }
-    
     const res = await sendOneBotAction(socket, "send_group_msg", { group_id: groupId, message: text });
     if (res?.retcode !== 0) {
         throw new Error(res?.msg ?? `OneBot send_group_msg failed (retcode=${res?.retcode})`);

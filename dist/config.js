@@ -56,7 +56,6 @@ export function getOneBotConfig(api, accountId) {
     const id = accountId ?? "default";
     const channel = cfg?.channels?.onebot;
     const account = channel?.accounts?.[id];
-    console.log(`[onebot] getOneBotConfig: requested accountId=${id}, found account=${!!account}`);
     if (account) {
         const { type, host, port, accessToken, path } = account;
         if (host && port) {
@@ -73,7 +72,6 @@ export function getOneBotConfig(api, accountId) {
     }
     // 只有当请求 "default" 时才使用全局配置作为 fallback
     if (id === "default" && channel?.host && channel?.port) {
-        console.log(`[onebot] getOneBotConfig: using global config for default`);
         return {
             accountId: id,
             type: channel.type ?? "forward-websocket",
@@ -83,7 +81,6 @@ export function getOneBotConfig(api, accountId) {
             path: channel.path ?? "/onebot/v11/ws",
         };
     }
-    console.log(`[onebot] getOneBotConfig: no config found for accountId=${id}, returning null`);
     return null;
 }
 /** 是否将机器人回复中的 Markdown 渲染为纯文本再发送，默认 true */

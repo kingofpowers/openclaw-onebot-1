@@ -136,7 +136,7 @@ export const OneBotChannelPlugin = {
             }
             const getConfig = () => getOneBotConfig(api, accountId);
             try {
-                const result = await sendTextMessage(to, text, getConfig, cfg);
+                const result = await sendTextMessage(to, text, getConfig, cfg, accountId);
                 if (!result.ok) {
                     return { channel: "onebot", ok: false, messageId: "", error: new Error(result.error) };
                 }
@@ -159,7 +159,7 @@ export const OneBotChannelPlugin = {
             }
             const getConfig = () => getOneBotConfig(api, accountId);
             try {
-                const result = await sendMediaMessage(to, mediaUrl, text, getConfig, cfg);
+                const result = await sendMediaMessage(to, mediaUrl, text, getConfig, cfg, accountId);
                 if (!result.ok) {
                     return { channel: "onebot", ok: false, messageId: "", error: new Error(result.error) };
                 }

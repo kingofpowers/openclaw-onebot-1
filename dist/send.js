@@ -30,8 +30,9 @@ function parseTarget(to) {
  * 发送文本消息到 OneBot 目标（私聊或群聊）
  * @param getConfig 可选，用于按需连接（forward-websocket 下 message send 可独立运行）
  * @param cfg 可选，用于读取 renderMarkdownToPlain 配置
+ * @param accountId 可选，指定账号 ID
  */
-export async function sendTextMessage(to, text, getConfig, cfg) {
+export async function sendTextMessage(to, text, getConfig, cfg, accountId) {
     const forwardSuppress = getForwardSuppressDelivery();
     const activeTarget = getActiveReplyTarget();
     const suppressed = forwardSuppress && isTargetActiveReply(to);
@@ -44,6 +45,7 @@ export async function sendTextMessage(to, text, getConfig, cfg) {
         activeReplyTarget: activeTarget,
         sessionId: activeTarget,
         replySessionId: getActiveReplySessionId(),
+        accountId,
     });
     if (suppressed) {
         return { ok: true, messageId: "" };
@@ -62,10 +64,10 @@ export async function sendTextMessage(to, text, getConfig, cfg) {
     try {
         let messageId;
         if (target.type === "group") {
-            messageId = await sendGroupMsg(target.id, finalText, getConfig);
+            messageId = await sendGroupMsg(target.id, finalText, getConfig, accountId);
         }
         else {
-            messageId = await sendPrivateMsg(target.id, finalText, getConfig);
+            messageId = await sendPrivateMsg(target.id, finalText, getConfig, accountId);
         }
         logSend("send", "sendTextMessage", {
             targetType: target.type,
@@ -73,6 +75,7 @@ export async function sendTextMessage(to, text, getConfig, cfg) {
             messageId,
             sessionId: activeTarget,
             replySessionId: getActiveReplySessionId(),
+            accountId,
         });
         return { ok: true, messageId: messageId != null ? String(messageId) : "" };
     }
@@ -88,8 +91,9 @@ export async function sendTextMessage(to, text, getConfig, cfg) {
  * mediaUrl 支持 file:// 路径、http(s):// URL、base64://
  * @param getConfig 可选，用于按需连接
  * @param cfg 可选，用于读取 renderMarkdownToPlain 配置
+ * @param accountId 可选，指定账号 ID
  */
-export async function sendMediaMessage(to, mediaUrl, text, getConfig, cfg) {
+export async function sendMediaMessage(to, mediaUrl, text, getConfig, cfg, accountId) {
     const forwardSuppress = getForwardSuppressDelivery();
     const activeTarget = getActiveReplyTarget();
     const suppressed = forwardSuppress && isTargetActiveReply(to);
@@ -102,6 +106,7 @@ export async function sendMediaMessage(to, mediaUrl, text, getConfig, cfg) {
         activeReplyTarget: activeTarget,
         sessionId: activeTarget,
         replySessionId: getActiveReplySessionId(),
+        accountId,
     });
     if (suppressed) {
         return { ok: true, messageId: "" };
@@ -121,19 +126,19 @@ export async function sendMediaMessage(to, mediaUrl, text, getConfig, cfg) {
         let messageId;
         if (finalText) {
             if (target.type === "group") {
-                messageId = await sendGroupMsg(target.id, finalText, getConfig);
+                messageId = await sendGroupMsg(target.id, finalText, getConfig, accountId);
             }
             else {
-                messageId = await sendPrivateMsg(target.id, finalText, getConfig);
+                messageId = await sendPrivateMsg(target.id, finalText, getConfig, accountId);
             }
         }
         if (target.type === "group") {
-            const id = await sendGroupImage(target.id, mediaUrl, undefined, getConfig);
+            const id = await sendGroupImage(target.id, mediaUrl, undefined, getConfig, accountId);
             if (id != null)
                 messageId = id;
         }
         else {
-            const id = await sendPrivateImage(target.id, mediaUrl, undefined, getConfig);
+            const id = await sendPrivateImage(target.id, mediaUrl, undefined, getConfig, accountId);
             if (id != null)
                 messageId = id;
         }
@@ -143,6 +148,7 @@ export async function sendMediaMessage(to, mediaUrl, text, getConfig, cfg) {
             messageId,
             sessionId: activeTarget,
             replySessionId: getActiveReplySessionId(),
+            accountId,
         });
         return { ok: true, messageId: messageId != null ? String(messageId) : "" };
     }
