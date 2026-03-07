@@ -40,6 +40,7 @@ export function startForwardCleanupTimer() {
     forwardCleanupTimer = setInterval(cleanupForwardPendingSessions, FORWARD_CLEANUP_INTERVAL_MS);
 }
 export async function processInboundMessage(api, msg, accountId = "default") {
+    console.log(`[onebot] processInboundMessage ENTRY: accountId=${accountId}`);
     await loadPluginSdk();
     const { buildPendingHistoryContextFromMap, recordPendingHistoryEntry, clearHistoryEntriesIfEnabled } = getSdk();
     const runtime = api.runtime;
@@ -49,9 +50,7 @@ export async function processInboundMessage(api, msg, accountId = "default") {
     }
     const config = getOneBotConfig(api, accountId);
     const effectiveAccountId = config?.accountId ?? accountId ?? "default";
-    
-    // 调试：追踪 accountId
-    api.logger?.info?.(`[onebot] processInboundMessage: accountId=${accountId}, config?.accountId=${config?.accountId}, effectiveAccountId=${effectiveAccountId}`);
+    console.log(`[onebot] processInboundMessage AFTER CONFIG: accountId=${accountId}, config?.accountId=${config?.accountId}, effectiveAccountId=${effectiveAccountId}`);
     
     if (!config) {
         api.logger?.warn?.("[onebot] not configured");
@@ -172,7 +171,13 @@ export async function processInboundMessage(api, msg, accountId = "default") {
         messageText = cmdText;
     }
     const whitelist = getWhitelistUserIds();
-    const getConfig = () => getOneBotConfig(api, effectiveAccountId);
+    console.log(`[onebot] BEFORE getConfig: effectiveAccountId=${effectiveAccountId}`);
+    const getConfig = () => {
+        const result = getOneBotConfig(api, effectiveAccountId);
+        console.log(`[onebot] getConfig called: effectiveAccountId=${effectiveAccountId}, result.accountId=${result?.accountId}`);
+        return result;
+    };
+    console.log(`[onebot] AFTER getConfig definition: effectiveAccountId=${effectiveAccountId}`);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
         const denyMsg = "权限不足，请向管理员申请权限";
         try {
