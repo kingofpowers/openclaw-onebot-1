@@ -2,28 +2,13 @@
  * OneBot WebSocket 服务（多账号支持）
  */
 import { getOneBotConfig, listAccountIds } from "./config.js";
-import { connectForward, createServerAndWait, addWs, removeWs, stopConnection, handleEchoResponse, startImageTempCleanup, stopImageTempCleanup, getWs, sendOneBotAction } from "./connection.js";
+import { connectForward, createServerAndWait, addWs, removeWs, stopConnection, handleEchoResponse, startImageTempCleanup, stopImageTempCleanup, getWs } from "./connection.js";
 import { processInboundMessage } from "./handlers/process-inbound.js";
 import { handleGroupIncrease } from "./handlers/group-increase.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 
 function getLogger(api) {
     return api?.logger ?? {};
-}
-
-/**
- * 获取机器人的 QQ 号（通过 get_login_info API）
- */
-async function fetchBotUserId(ws, log) {
-    try {
-        const res = await sendOneBotAction(ws, "get_login_info", {});
-        if (res?.retcode === 0 && res?.data?.user_id) {
-            return Number(res.data.user_id);
-        }
-    } catch (e) {
-        log.warn?.(`[onebot] get_login_info failed: ${e?.message}`);
-    }
-    return null;
 }
 
 /**
@@ -40,16 +25,6 @@ async function startAccountConnection(api, accountId, config) {
         }
         addWs(accountId, ws);
         log.info?.(`[onebot] WebSocket connected (accountId=${accountId})`);
-        
-        // 获取机器人的 QQ 号并记录（用于防止机器人之间无限对话）
-        const botUserId = await fetchBotUserId(ws, log);
-        if (botUserId) {
-            if (!globalThis.__onebotBotUserIds) {
-                globalThis.__onebotBotUserIds = new Set();
-            }
-            globalThis.__onebotBotUserIds.add(botUserId);
-            log.info?.(`[onebot] bot user_id for ${accountId}: ${botUserId}`);
-        }
         
         ws.on("message", (data) => {
             try {
@@ -96,9 +71,6 @@ export function registerService(api) {
             const accountIds = listAccountIds(api);
             const log = getLogger(api);
             
-            // 重置机器人 ID 集合
-            globalThis.__onebotBotUserIds = new Set();
-            
             if (accountIds.length === 0) {
                 log.warn?.("[onebot] no config, service will not connect");
                 return;
@@ -123,17 +95,11 @@ export function registerService(api) {
             
             const successCount = results.filter(Boolean).length;
             log.info?.(`[onebot] ${successCount}/${accountIds.length} connection(s) established`);
-            
-            // 记录所有机器人 ID（用于防止互相对话）
-            if (globalThis.__onebotBotUserIds?.size > 0) {
-                log.info?.(`[onebot] bot user_ids: ${Array.from(globalThis.__onebotBotUserIds).join(", ")}`);
-            }
         },
         stop: async () => {
             stopImageTempCleanup();
             stopScheduler();
             stopConnection();
-            globalThis.__onebotBotUserIds = new Set();
             getLogger(api).info?.("[onebot] service stopped");
         },
     });

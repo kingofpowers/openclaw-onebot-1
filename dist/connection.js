@@ -155,7 +155,7 @@ export function removeWs(accountId) {
 export function getConnectedAccountIds() {
     return Array.from(wsMap.keys());
 }
-export async function sendOneBotAction(wsocket, action, params, log = getLogger()) {
+async function sendOneBotAction(wsocket, action, params, log = getLogger()) {
     const echo = nextEcho();
     const payload = { action, params, echo };
     return new Promise((resolve, reject) => {
