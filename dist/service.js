@@ -15,7 +15,9 @@ function getLogger(api) {
 
 let configWatcher = null;
 let lastReloadTime = 0;
+let configPollTimer = null;
 const RELOAD_DEBOUNCE_MS = 1000; // 防抖 1 秒
+const CONFIG_POLL_INTERVAL_MS = 5000; // 轮询间隔 5 秒
 
 /**
  * 为单个账号创建连接并设置消息处理
@@ -146,19 +148,19 @@ async function startConfigWatcher(api) {
     
     log.info?.(`[onebot] watching config file: ${configPath}`);
     
-    configWatcher = watch(configPath, (eventType) => {
+    // 启动轮询作为备选（Docker 环境中 fs.watch 可能不工作）
+    startConfigPoll(api);
+    
+    configWatcher = watch(configPath, { persistent: true, recursive: false }, (eventType) => {
         log.info?.(`[onebot] config file event: ${eventType}`);
-        if (eventType === "change" || eventType === "rename") {
-            log.info?.(`[onebot] config file changed, invalidating cache...`);
-            // 清除配置缓存，下次读取时会重新加载
-            invalidateConfigCache();
-            // 延迟一小段时间，确保文件写入完成
-            setTimeout(() => {
-                reloadConnections(api).catch((e) => {
-                    log.error?.(`[onebot] reload failed: ${e?.message}`);
-                });
-            }, 100);
-        }
+        // rename 或 change 都触发重载（某些系统使用 rename）
+        invalidateConfigCache();
+        // 延迟一小段时间，确保文件写入完成
+        setTimeout(() => {
+            reloadConnections(api).catch((e) => {
+                log.error?.(`[onebot] reload failed: ${e?.message}`);
+            });
+        }, 100);
     });
     
     configWatcher.on("error", (e) => {
@@ -174,6 +176,41 @@ function stopConfigWatcher() {
         configWatcher.close();
         configWatcher = null;
     }
+    if (configPollTimer) {
+        clearInterval(configPollTimer);
+        configPollTimer = null;
+    }
+}
+
+/**
+ * 启动配置轮询（作为 fs.watch 的备选）
+ */
+function startConfigPoll(api) {
+    const log = getLogger(api);
+    let lastMtime = 0;
+    
+    const poll = async () => {
+        const configPath = await getConfigPath(api);
+        if (!configPath) return;
+        
+        try {
+            const { stat } = await import("fs/promises");
+            const stats = await stat(configPath);
+            const mtime = stats.mtimeMs;
+            
+            if (lastMtime > 0 && mtime > lastMtime) {
+                log.info?.(`[onebot] config file modified (poll detected), invalidating cache...`);
+                invalidateConfigCache();
+            }
+            lastMtime = mtime;
+        } catch (e) {
+            // ignore
+        }
+    };
+    
+    // 立即执行一次，获取初始 mtime
+    poll();
+    configPollTimer = setInterval(poll, CONFIG_POLL_INTERVAL_MS);
 }
 
 export function registerService(api) {
