@@ -51,7 +51,8 @@ export function getLiveOneBotChannelConfig() {
 }
 
 export function getOneBotConfig(api, accountId) {
-    const cfg = api?.config ?? globalThis.__onebotGatewayConfig;
+    // 使用实时配置（支持热加载）
+    const cfg = getLiveConfig() ?? api?.config ?? globalThis.__onebotGatewayConfig;
     const id = accountId ?? "default";
     const channel = cfg?.channels?.onebot;
     const account = channel?.accounts?.[id];
