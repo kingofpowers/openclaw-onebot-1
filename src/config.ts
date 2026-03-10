@@ -149,3 +149,25 @@ export function listAccountIds(apiOrCfg: any): string[] {
   if (cfg?.channels?.onebot?.host) return ["default"];
   return [];
 }
+
+/** 默认排除的消息内容（不触发 AI 回复，不进入历史记录） */
+const DEFAULT_SKIP_MESSAGES = [
+  "An unknown error occurred",
+  "你好，我无法给到相关内容。",
+];
+
+/** 获取排除消息列表 */
+export function getSkipMessages(cfg?: any): string[] {
+  const c = cfg ?? getLiveConfig();
+  const v = c?.channels?.onebot?.skipMessages;
+  if (Array.isArray(v) && v.length > 0) {
+    return [...DEFAULT_SKIP_MESSAGES, ...v];
+  }
+  return DEFAULT_SKIP_MESSAGES;
+}
+
+/** 是否为排除消息（精确匹配或包含） */
+export function isSkipMessage(text: string, cfg?: any): boolean {
+  const skipMessages = getSkipMessages(cfg);
+  return skipMessages.some((skip) => text.includes(skip));
+}

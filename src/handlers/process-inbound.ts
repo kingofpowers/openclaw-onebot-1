@@ -3,7 +3,7 @@
  */
 
 import type { OneBotMessage } from "../types.js";
-import { getOneBotConfig } from "../config.js";
+import { getOneBotConfig, isSkipMessage } from "../config.js";
 import {
     getRawText,
     getTextFromSegments,
@@ -93,6 +93,12 @@ export async function processInboundMessage(api: any, msg: OneBotMessage): Promi
     }
     if (!messageText?.trim()) {
         api.logger?.info?.(`[onebot] ignoring empty message`);
+        return;
+    }
+
+    // 检查是否为排除消息（如 "An unknown error occurred"）
+    if (isSkipMessage(messageText)) {
+        api.logger?.info?.(`[onebot] skipping excluded message: ${messageText.slice(0, 50)}...`);
         return;
     }
 
