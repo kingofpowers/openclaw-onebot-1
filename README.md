@@ -207,6 +207,27 @@ openclaw message send --channel onebot --target group:987654321 --media "file://
 }
 ```
 
+## 消息过滤
+
+### 排除消息
+
+某些消息不需要触发 AI 回复（如错误消息），可以通过 `skipMessages` 配置：
+
+```json
+{
+  "channels": {
+    "onebot": {
+      "skipMessages": [
+        "An unknown error occurred",
+        "你好，我无法给到相关内容。"
+      ]
+    }
+  }
+}
+```
+
+默认已排除常见错误消息，配置后会追加到默认列表。
+
 ## 新人入群触发器
 
 如果有人入群之后，可以通过这个来实现触发器。
