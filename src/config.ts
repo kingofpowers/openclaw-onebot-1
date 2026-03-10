@@ -2,10 +2,59 @@
  * OneBot 配置解析
  */
 
+import { readFileSync, existsSync } from "fs";
 import type { OneBotAccountConfig } from "./types.js";
 
+// 配置缓存（仅在文件变化时更新）
+let cachedConfig: any = null;
+
+/**
+ * 清除配置缓存（在检测到文件变化时调用）
+ */
+export function invalidateConfigCache(): void {
+  cachedConfig = null;
+}
+
+/**
+ * 从文件读取最新配置（仅在缓存失效时读取）
+ */
+export function getLiveConfig(): any {
+  if (cachedConfig) {
+    return cachedConfig;
+  }
+
+  const possiblePaths = [
+    process.env.OPENCLAW_CONFIG,
+    "/home/node/.openclaw/openclaw.json",
+    "/app/openclaw.json",
+  ].filter(Boolean);
+
+  for (const path of possiblePaths) {
+    try {
+      if (existsSync(path)) {
+        const content = readFileSync(path, "utf-8");
+        cachedConfig = JSON.parse(content);
+        return cachedConfig;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 获取实时的 OneBot channel 配置（从文件读取，支持热加载）
+ */
+export function getLiveOneBotChannelConfig(): any {
+  const cfg = getLiveConfig();
+  return cfg?.channels?.onebot ?? {};
+}
+
 export function getOneBotConfig(api: any, accountId?: string): OneBotAccountConfig | null {
-  const cfg = api?.config ?? (globalThis as any).__onebotGatewayConfig;
+  // 使用实时配置（支持热加载）
+  const cfg = getLiveConfig() ?? api?.config ?? (globalThis as any).__onebotGatewayConfig;
   const id = accountId ?? "default";
 
   const channel = cfg?.channels?.onebot;
@@ -25,7 +74,8 @@ export function getOneBotConfig(api: any, accountId?: string): OneBotAccountConf
     }
   }
 
-  if (channel?.host && channel?.port) {
+  // 只有当请求 "default" 时才使用全局配置作为 fallback
+  if (id === "default" && channel?.host && channel?.port) {
     return {
       accountId: id,
       type: channel.type ?? "forward-websocket",
@@ -91,7 +141,7 @@ export function getOgImageRenderTheme(cfg: any): "default" | "dust" | string {
 }
 
 export function listAccountIds(apiOrCfg: any): string[] {
-  const cfg = apiOrCfg?.config ?? apiOrCfg ?? (globalThis as any).__onebotGatewayConfig;
+  const cfg = apiOrCfg?.config ?? apiOrCfg ?? getLiveConfig() ?? (globalThis as any).__onebotGatewayConfig;
   const accounts = cfg?.channels?.onebot?.accounts;
   if (accounts && Object.keys(accounts).length > 0) {
     return Object.keys(accounts);

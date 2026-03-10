@@ -67,6 +67,43 @@ openclaw onebot setup
 2. 重启 Gateway：`openclaw gateway restart`
 3. 在 QQ 私聊或群聊中发消息（群聊需 @ 机器人）
 
+## 多账号配置
+
+支持同时连接多个 OneBot 实例（如多个 QQ 号）：
+
+```json
+{
+  "channels": {
+    "onebot": {
+      "accounts": {
+        "main": {
+          "type": "forward-websocket",
+          "host": "napcat",
+          "port": 3001,
+          "accessToken": "your-token-1"
+        },
+        "macro": {
+          "type": "forward-websocket",
+          "host": "napcat2",
+          "port": 3011,
+          "accessToken": "your-token-2"
+        }
+      }
+    }
+  }
+}
+```
+
+每个账号独立连接，可通过 `bindings` 配置路由到不同的 Agent。
+
+## 配置热重载
+
+修改 `openclaw.json` 后，配置会自动生效（无需重启 Gateway）：
+
+- `requireMention` 等配置实时更新
+- Docker 环境中自动启用轮询备选方案
+- 支持新增/删除账号连接
+
 ## 长消息处理与 OG 图片渲染
 
 当单次回复超过**长消息阈值**（默认 300 字）时，可选用三种模式（`openclaw onebot setup` 中配置）：

@@ -123,6 +123,9 @@ let httpServer: import("http").Server | null = null;
 const pendingEcho = new Map<string, { resolve: (v: any) => void }>();
 let echoCounter = 0;
 
+/** 多账号 WebSocket 连接 */
+const wsByAccount = new Map<string, WebSocket>();
+
 let connectionReadyResolve: (() => void) | null = null;
 const connectionReadyPromise = new Promise<void>((r) => { connectionReadyResolve = r; });
 
@@ -175,6 +178,31 @@ function sendOneBotAction(wsocket: WebSocket, action: string, params: Record<str
 
 export function getWs(): WebSocket | null {
     return ws;
+}
+
+/** 添加账号 WebSocket 连接 */
+export function addWs(accountId: string, socket: WebSocket): void {
+    wsByAccount.set(accountId, socket);
+    if (!ws) {
+        ws = socket;
+        if (socket.readyState === WebSocket.OPEN && connectionReadyResolve) {
+            connectionReadyResolve();
+            connectionReadyResolve = null;
+        }
+    }
+}
+
+/** 移除账号 WebSocket 连接 */
+export function removeWs(accountId: string): void {
+    wsByAccount.delete(accountId);
+    if (ws && wsByAccount.size === 0) {
+        ws = null;
+    }
+}
+
+/** 获取账号 WebSocket 连接 */
+export function getWsByAccount(accountId: string): WebSocket | null {
+    return wsByAccount.get(accountId) ?? null;
 }
 
 /** 为 WebSocket 设置 echo 响应处理（按需连接时需调用，以便 sendOneBotAction 能收到响应） */
@@ -704,10 +732,15 @@ export function setWs(socket: WebSocket | null): void {
 }
 
 export function stopConnection(): void {
-    if (ws) {
-        ws.close();
-        ws = null;
+    // 关闭所有账号连接
+    for (const [_, socket] of wsByAccount) {
+        try {
+            socket.close();
+        } catch { }
     }
+    wsByAccount.clear();
+    ws = null;
+
     if (wsServer) {
         wsServer.close();
         wsServer = null;
