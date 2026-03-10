@@ -141,7 +141,14 @@ export function getOgImageRenderTheme(cfg: any): "default" | "dust" | string {
 }
 
 export function listAccountIds(apiOrCfg: any): string[] {
-  const cfg = apiOrCfg?.config ?? apiOrCfg ?? getLiveConfig() ?? (globalThis as any).__onebotGatewayConfig;
+  // 优先使用实时配置
+  let cfg = getLiveConfig();
+  
+  // 如果实时配置没有 accounts，尝试从 api.config 获取
+  if (!cfg?.channels?.onebot?.accounts) {
+    cfg = apiOrCfg?.config ?? apiOrCfg ?? (globalThis as any).__onebotGatewayConfig;
+  }
+  
   const accounts = cfg?.channels?.onebot?.accounts;
   if (accounts && Object.keys(accounts).length > 0) {
     return Object.keys(accounts);
