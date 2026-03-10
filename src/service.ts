@@ -44,7 +44,7 @@ async function startAccountConnection(api: any, accountId: string, config: any):
 
                 const msg = payload as OneBotMessage;
                 if (msg.post_type === "message" && (msg.message_type === "private" || msg.message_type === "group")) {
-                    processInboundMessage(api, msg).catch((e) => {
+                    processInboundMessage(api, msg, accountId).catch((e) => {
                         log.error?.(`[onebot] processInboundMessage: ${e?.message}`);
                     });
                 } else if (msg.post_type === "notice" && msg.notice_type === "group_increase") {

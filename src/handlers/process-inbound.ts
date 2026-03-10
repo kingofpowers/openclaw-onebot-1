@@ -57,7 +57,7 @@ export function startForwardCleanupTimer(): void {
     forwardCleanupTimer = setInterval(cleanupForwardPendingSessions, FORWARD_CLEANUP_INTERVAL_MS);
 }
 
-export async function processInboundMessage(api: any, msg: OneBotMessage): Promise<void> {
+export async function processInboundMessage(api: any, msg: OneBotMessage, accountId?: string): Promise<void> {
     await loadPluginSdk();
     const { buildPendingHistoryContextFromMap, recordPendingHistoryEntry, clearHistoryEntriesIfEnabled } = getSdk();
 
@@ -67,11 +67,12 @@ export async function processInboundMessage(api: any, msg: OneBotMessage): Promi
         return;
     }
 
-    const config = getOneBotConfig(api);
+    const config = getOneBotConfig(api, accountId);
     if (!config) {
-        api.logger?.warn?.("[onebot] not configured");
+        api.logger?.warn?.(`[onebot] not configured (accountId=${accountId ?? "default"})`);
         return;
     }
+    const effectiveAccountId = config.accountId;
 
     const selfId = msg.self_id ?? 0;
     if (msg.user_id != null && Number(msg.user_id) === Number(selfId)) {
@@ -159,7 +160,7 @@ export async function processInboundMessage(api: any, msg: OneBotMessage): Promi
     const whitelist = getWhitelistUserIds(cfg);
     if (whitelist.length > 0 && !whitelist.includes(Number(userId))) {
         const denyMsg = "权限不足，请向管理员申请权限";
-        const getConfig = () => getOneBotConfig(api);
+        const getConfig = () => getOneBotConfig(api, effectiveAccountId);
         try {
             if (msg.message_type === "group" && msg.group_id) await sendGroupMsg(msg.group_id, denyMsg, getConfig);
             else await sendPrivateMsg(userId, denyMsg, getConfig);
@@ -312,7 +313,7 @@ export async function processInboundMessage(api: any, msg: OneBotMessage): Promi
     const deliveredChunks: Array<{ index: number; text?: string; rawText?: string; mediaUrl?: string }> = [];
     let chunkIndex = 0;
 
-    const getConfig = () => getOneBotConfig(api);
+    const getConfig = () => getOneBotConfig(api, effectiveAccountId);
 
     const onReplySessionEnd = onebotCfg.onReplySessionEnd as string | ((ctx: ReplySessionContext) => void | Promise<void>) | undefined;
 
