@@ -1,7 +1,9 @@
 /**
  * OneBot WebSocket 连接与 API 调用
  *
- * 图片消息：网络 URL 会先下载到本地再发送（兼容 Lagrange.Core retcode 1200），
+ * 图片消息：
+ * - 本机回环连接时：网络 URL 会先下载到本地再发送（兼容部分实现的 retcode 1200）
+ * - 跨机器连接时：本地文件会自动转成 base64://，避免把宿主机绝对路径发给远端 OneBot
  * 并定期清理临时文件。
  */
 
@@ -10,7 +12,7 @@ import WebSocket from "ws";
 import { createServer } from "http";
 import https from "https";
 import http from "http";
-import { writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import { writeFileSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { OneBotAccountConfig } from "./types.js";
@@ -102,6 +104,56 @@ async function resolveImageToLocalPath(image: string): Promise<string> {
     return trimmed.replace(/\\/g, "/");
 }
 
+async function resolveImageToBuffer(image: string): Promise<Buffer> {
+    const trimmed = image?.trim();
+    if (!trimmed) throw new Error("Empty image");
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        return downloadUrl(trimmed);
+    }
+    if (trimmed.startsWith("base64://")) {
+        return Buffer.from(trimmed.slice(9), "base64");
+    }
+    if (trimmed.startsWith("file://")) {
+        return readFileSync(trimmed.slice(7));
+    }
+    return readFileSync(trimmed);
+}
+
+function normalizePeerHost(host: string | undefined | null): string {
+    const trimmed = String(host ?? "").trim().toLowerCase();
+    if (!trimmed) return "";
+    const unwrapped = trimmed.replace(/^\[/, "").replace(/\]$/, "");
+    return unwrapped.startsWith("::ffff:") ? unwrapped.slice(7) : unwrapped;
+}
+
+function isLoopbackHost(host: string | undefined | null): boolean {
+    const normalized = normalizePeerHost(host);
+    return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+function getSocketPeerHost(socket: WebSocket, getConfig?: () => OneBotAccountConfig | null): string {
+    const peerHost = (socket as OneBotSocketWithPeer).__onebotPeerHost;
+    if (peerHost) return peerHost;
+    return getConfig?.()?.host ?? "";
+}
+
+function shouldEncodeImageAsBase64(socket: WebSocket, getConfig?: () => OneBotAccountConfig | null): boolean {
+    const peerHost = getSocketPeerHost(socket, getConfig);
+    return !!peerHost && !isLoopbackHost(peerHost);
+}
+
+async function resolveImageFileForSend(
+    image: string,
+    socket: WebSocket,
+    getConfig?: () => OneBotAccountConfig | null
+): Promise<string> {
+    if (shouldEncodeImageAsBase64(socket, getConfig)) {
+        return `base64://${(await resolveImageToBuffer(image)).toString("base64")}`;
+    }
+    return resolveImageToLocalPath(image);
+}
+
 /** 启动临时图片定期清理（每小时执行一次） */
 export function startImageTempCleanup(): void {
     stopImageTempCleanup();
@@ -125,6 +177,8 @@ let echoCounter = 0;
 
 let connectionReadyResolve: (() => void) | null = null;
 const connectionReadyPromise = new Promise<void>((r) => { connectionReadyResolve = r; });
+
+type OneBotSocketWithPeer = WebSocket & { __onebotPeerHost?: string };
 
 function nextEcho(): string {
     return `onebot-${Date.now()}-${++echoCounter}`;
@@ -311,7 +365,7 @@ export async function sendGroupImage(
     log.info?.(`222[onebot] sendGroupImage entry: groupId=${groupId} image=${image?.slice?.(0, 80) ?? ""}`);
 
     try {
-        const filePath = image.startsWith("[") ? null : await resolveImageToLocalPath(image);
+        const filePath = image.startsWith("[") ? null : await resolveImageFileForSend(image, socket, getConfig);
         const seg = image.startsWith("[")
             ? JSON.parse(image)
             : [{ type: "image", data: { file: filePath! } }];
@@ -392,7 +446,7 @@ export async function sendPrivateImage(
     });
     log.info?.(`[onebot] sendPrivateImage entry: userId=${userId} image=${image?.slice?.(0, 80) ?? ""}`);
     const socket = getConfig ? await ensureConnection(getConfig) : await waitForConnection();
-    const filePath = image.startsWith("[") ? null : await resolveImageToLocalPath(image);
+    const filePath = image.startsWith("[") ? null : await resolveImageFileForSend(image, socket, getConfig);
     const seg = image.startsWith("[")
         ? JSON.parse(image)
         : [{ type: "image", data: { file: filePath! } }];
@@ -672,6 +726,7 @@ export async function connectForward(config: OneBotAccountConfig): Promise<WebSo
         w.on("open", () => resolve());
         w.on("error", reject);
     });
+    (w as OneBotSocketWithPeer).__onebotPeerHost = config.host;
     return w;
 }
 
@@ -689,7 +744,8 @@ export async function createServerAndWait(config: OneBotAccountConfig): Promise<
     wsServer = wss as any;
 
     return new Promise((resolve) => {
-        wss.on("connection", (socket: WebSocket) => {
+        wss.on("connection", (socket: WebSocket, req) => {
+            (socket as OneBotSocketWithPeer).__onebotPeerHost = req.socket.remoteAddress ?? undefined;
             resolve(socket as WebSocket);
         });
     });
